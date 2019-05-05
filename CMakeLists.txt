@@ -5,17 +5,21 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH} "${PROJECT_SOURCE_DIR}")
 
-add_definitions("-std=c++11")
+
+set(CMAKE_CXX_STANDARD 17) # Use C++17
+set(CMAKE_CXX_EXTENSIONS OFF) # Use -std=c++17 instead of something else
 
 
+# set(Julia_EXECUTABLE "/Users/csousa/Desktop/julia/usr/bin/julia-debug")
 find_package(Julia)
+
 add_definitions(${Julia_DEFINITIONS})
 include_directories(${Julia_INCLUDE_DIRS})
 link_directories(${Julia_LIBRARY_DIRS})
 
-add_executable(embedding_julia embedding.cpp)
-target_link_libraries(embedding_julia ${Julia_LIBRARIES})
 
+# add_executable(embedding_julia embedding.cpp)
+# target_link_libraries(embedding_julia ${Julia_LIBRARIES})
 
 add_executable(sometests sometests.cpp)
-target_link_libraries(sometests pthread ${Julia_LIBRARIES})
+target_link_libraries(sometests ${Julia_LIBRARIES})

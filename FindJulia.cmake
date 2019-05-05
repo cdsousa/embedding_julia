@@ -30,7 +30,7 @@ endif()
 
 
 execute_process(
-  COMMAND ${Julia_EXECUTABLE} -e "print(JULIA_HOME)"
+  COMMAND ${Julia_EXECUTABLE} -e "print(Sys.BINDIR)"
   OUTPUT_VARIABLE Julia_HOME
   RESULT_VARIABLE RESULT
 )
