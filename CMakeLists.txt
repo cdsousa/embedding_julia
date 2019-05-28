@@ -29,3 +29,6 @@ target_link_libraries(julia_multithreading ${Julia_LIBRARIES})
 
 add_executable(juliadispatcher juliadispatcher.cpp)
 target_link_libraries(juliadispatcher ${Julia_LIBRARIES})
+
+add_executable(julia_cpp_ts julia_cpp_ts.cpp)
+target_link_libraries(julia_cpp_ts ${Julia_LIBRARIES})

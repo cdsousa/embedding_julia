@@ -13,16 +13,32 @@
 #include <julia.h>
 
 
-class Worker {
+
+class julia {
     bool running = true;
     std::thread t;
     std::mutex mtx;
     std::condition_variable cond;
     std::deque<std::function<void()>> tasks;
 
-public:
-    Worker() : t{&Worker::threadFunc, this} {}
-    ~Worker() {
+private:
+    static julia& instance() {
+        static julia instance;
+        return instance;
+    }
+
+    julia() : t{&julia::threadFunc, this} {
+        _run([] {
+            setenv("JULIA_NUM_THREADS", "16", true);
+            jl_init();
+            jl_eval_string("println(\"JULIA  START\")");
+        });
+    }
+    ~julia() {
+        _run([] {
+            jl_eval_string("println(\"JULIA END\")");
+            jl_atexit_hook(0);
+        });
         {
             std::unique_lock<std::mutex> lock(mtx);
             running = false;
@@ -31,7 +47,7 @@ public:
         t.join();
     }
 
-    template <typename F> auto spawn(const F& f) -> std::packaged_task<decltype(f())()> {
+    template <typename F> auto _spawn(const F& f) -> std::packaged_task<decltype(f())()> {
         std::packaged_task<decltype(f())()> task(f);
         {
             std::unique_lock<std::mutex> lock(mtx);
@@ -41,9 +57,8 @@ public:
         return task;
     }
 
-    template <typename F> auto run(const F& f) -> decltype(f()) { return spawn(f).get_future().get(); }
+    template <typename F> auto _run(const F& f) -> decltype(f()) { return _spawn(f).get_future().get(); }
 
-private:
     void threadFunc() {
         while (true) {
             std::function<void()> task;
@@ -61,39 +76,14 @@ private:
             task();
         }
     }
-};
-
-
-
-class julia {
-    Worker worker;
-
-private:
-    static julia& instance() {
-        static julia instance;
-        return instance;
-    }
-
-    julia() {
-        worker.run([] {
-            jl_init();
-            jl_eval_string("println(\"JULIA  START\")");
-        });
-    }
-    ~julia() {
-        worker.run([] {
-            jl_eval_string("println(\"JULIA END\")");
-            jl_atexit_hook(0);
-        });
-    }
 
 public:
     template <typename F> static auto spawn(const F& f) -> std::packaged_task<decltype(f())()> {
-        return instance().worker.spawn(f);
+        return instance()._spawn(f);
     }
-    template <typename F> static auto run(const F& f) -> decltype(f()) { return instance().worker.run(f); }
+    template <typename F> static auto run(const F& f) -> decltype(f()) { return instance()._run(f); }
     static void run(const char* s) {
-        return instance().worker.run([&] { jl_eval_string(s); });
+        return instance()._run([&] { jl_eval_string(s); });
     }
 };
 
