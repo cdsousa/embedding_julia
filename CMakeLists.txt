@@ -10,7 +10,7 @@ set(CMAKE_CXX_STANDARD 17) # Use C++17
 set(CMAKE_CXX_EXTENSIONS OFF) # Use -std=c++17 instead of something else
 
 
-set(Julia_EXECUTABLE "/Users/csousa/Desktop/julia/usr/bin/julia-debug")
+# set(Julia_EXECUTABLE "~/Desktop/julia/usr/bin/julia-debug")
 find_package(Julia)
 
 add_definitions(${Julia_DEFINITIONS})
@@ -31,4 +31,4 @@ add_executable(juliadispatcher juliadispatcher.cpp)
 target_link_libraries(juliadispatcher ${Julia_LIBRARIES})
 
 add_executable(julia_cpp_ts julia_cpp_ts.cpp)
-target_link_libraries(julia_cpp_ts ${Julia_LIBRARIES})
+target_link_libraries(julia_cpp_ts ${Julia_LIBRARIES} pthread)
