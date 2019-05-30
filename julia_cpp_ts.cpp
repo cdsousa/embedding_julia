@@ -39,6 +39,8 @@ private:
 
     void julia_main_thread_func() {
 
+        using namespace std::chrono_literals;
+
         // uv_setup_args(0,0);
         // libsupport_init();
 
@@ -60,31 +62,29 @@ private:
             {
                 std::unique_lock<std::mutex> lock(mtx);
                 while (tasks.empty() && running) {
-                    std::cout << ">>> waiting cond" << std::endl;
-                    cond.wait(lock);
+                    jl_yield();
+                    uv_run(jl_global_event_loop(), UV_RUN_NOWAIT);
+                    // std::cout << ">>> waiting cond" << std::endl;
+                    cond.wait_for(lock, 100ms);
                 }
                 if (!running) {
                     break;
                 }
-                std::cout << ">>> poping task" << std::endl;
+                // std::cout << ">>> poping task" << std::endl;
                 task = std::move(tasks.front());
                 tasks.pop_front();
-                std::cout << ">>> poped" << std::endl;
+                // std::cout << ">>> poped" << std::endl;
             }
-            std::cout << ">>> evaluating string" << std::endl;
+            // std::cout << ">>> evaluating string" << std::endl;
 
-            jl_value_t* val = (jl_value_t*)jl_eval_string(task.c_str());
+            jl_eval_string(task.c_str());
             if (jl_exception_occurred()) {
                 jl_printf(JL_STDERR, "error during run:\n");
                 jl_static_show(JL_STDERR, jl_exception_occurred());
                 jl_exception_clear();
-            } else if (val) {
-                jl_static_show(JL_STDOUT, val);
-            }
-            jl_printf(JL_STDOUT, "\n");
+            } 
 
-            std::cout << ">>> string evaled" << std::endl;
-            uv_run(jl_global_event_loop(), UV_RUN_NOWAIT);
+            // std::cout << ">>> string evaled" << std::endl;
         }
 
         jl_eval_string("println(\"JULIA END\")");
@@ -92,9 +92,9 @@ private:
     }
 
     static void setpromise(std::promise<void>* p) {
-        std::cout << ">>> setting promise" << std::endl;
+        // std::cout << ">>> setting promise" << std::endl;
         p->set_value();
-        std::cout << ">>> promise set" << std::endl;
+        // std::cout << ">>> promise set" << std::endl;
     }
 
 public:
@@ -102,21 +102,20 @@ public:
         std::promise<void> p;
         std::string je = s +
                          ";"
-                         "println(\"----> $(Threads.threadid())/$(Threads.nthreads())\");"
                          "setpromise(Ptr{Cvoid}(" +
                          std::to_string(reinterpret_cast<std::size_t>(&p)) + "));";
         {
             std::unique_lock<std::mutex> lock(julia_instance().mtx);
-            std::cout << ">>> emplacing task" << std::endl;
+            // std::cout << ">>> emplacing task" << std::endl;
             julia_instance().tasks.emplace_back(std::move(je));
-            std::cout << ">>> emplaced" << std::endl;
+            // std::cout << ">>> emplaced" << std::endl;
         }
-        std::cout << ">>> notifying" << std::endl;
+        // std::cout << ">>> notifying" << std::endl;
         julia_instance().cond.notify_one();
-        std::cout << ">>> notified" << std::endl;
-        std::cout << ">>> waiting future" << std::endl;
+        // std::cout << ">>> notified" << std::endl;
+        // std::cout << ">>> waiting future" << std::endl;
         p.get_future().wait();
-        std::cout << ">>> future got" << std::endl;
+        // std::cout << ">>> future got" << std::endl;
     }
 
     static void par_eval_string(const std::string& s) {
@@ -127,28 +126,27 @@ public:
                          "setpromise(Ptr{Cvoid}(" +
                          std::to_string(reinterpret_cast<std::size_t>(&p)) +
                          "));"
-                         "println(\"----> $(Threads.threadid())/$(Threads.nthreads())\");"
                          ";end);"
-                         //  "t.sticky=false;"
+                        //   "t.sticky=false;"
                          "schedule(t);";
         {
             std::unique_lock<std::mutex> lock(julia_instance().mtx);
-            std::cout << ">>> emplacing task" << std::endl;
+            // std::cout << ">>> emplacing task" << std::endl;
             julia_instance().tasks.emplace_back(std::move(je));
-            std::cout << ">>> emplaced" << std::endl;
+            // std::cout << ">>> emplaced" << std::endl;
         }
-        std::cout << ">>> notifying" << std::endl;
+        // std::cout << ">>> notifying" << std::endl;
         julia_instance().cond.notify_one();
-        std::cout << ">>> notified - waiting future" << std::endl;
+        // std::cout << ">>> notified - waiting future" << std::endl;
         p.get_future().wait();
-        std::cout << ">>> future got" << std::endl;
+        // std::cout << ">>> future got" << std::endl;
     }
 };
 
 
 int other_thread() {
 
-    julia::eval_string("println(\"other thread\")");
+    julia::par_eval_string("println(\"o1 - $(Threads.threadid())/$(Threads.nthreads())\"); sleep(3); println(\"o1\")");
 
     return 0;
 }
@@ -156,22 +154,16 @@ int other_thread() {
 
 int main(int argc, char* argv[]) {
 
-    std::cout << "Program start" << std::endl;
     {
 
-        julia::par_eval_string("println(\"main thread - 1\")");
+        julia::par_eval_string("println(\"m1 - $(Threads.threadid())/$(Threads.nthreads())\"); sleep(3); println(\"m1\")");
 
-        // std::thread t(other_thread);
+        std::thread t(other_thread);
 
-        // julia::eval_string("println(\"main thread - 2\")");
+        julia::par_eval_string("println(\"m2 - $(Threads.threadid())/$(Threads.nthreads())\"); sleep(3); println(\"m2\")");
 
-        // t.join();
+        t.join();
     }
-
-    // using namespace std::chrono_literals;
-    // std::this_thread::sleep_for(6s);
-
-    std::cout << "Program end" << std::endl;
 
     return 0;
 }
