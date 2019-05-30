@@ -10,7 +10,8 @@ set(CMAKE_CXX_STANDARD 17) # Use C++17
 set(CMAKE_CXX_EXTENSIONS OFF) # Use -std=c++17 instead of something else
 
 
-# set(Julia_EXECUTABLE "~/Desktop/julia/usr/bin/julia-debug")
+set(Julia_EXECUTABLE "$ENV{HOME}/Desktop/julia/usr/bin/julia-debug")
+set(Julia_LIBRARY_NAME "julia-debug")
 find_package(Julia)
 
 add_definitions(${Julia_DEFINITIONS})

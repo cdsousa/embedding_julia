@@ -44,7 +44,7 @@ set(Julia_INCLUDE_DIRS ${Julia_DIR}/include/julia)
 set(Julia_LIBRARY_DIRS ${Julia_DIR}/lib ${Julia_DIR}/lib/julia)
 
 find_library( Julia_LIBRARIES
-    NAMES julia
+    NAMES ${Julia_LIBRARY_NAME} julia
     PATHS ${Julia_LIBRARY_DIRS}
 )
 
