@@ -39,8 +39,12 @@ private:
 
     void julia_main_thread_func() {
 
-        setenv("JULIA_NUM_THREADS", "1", true);
+        // uv_setup_args(0,0);
+        // libsupport_init();
+
+        setenv("JULIA_NUM_THREADS", "16", true);
         jl_init();
+
         jl_eval_string("println(\"JULIA  START\")");
 
         auto setpromise_ptr = std::to_string(reinterpret_cast<std::size_t>(setpromise));
@@ -56,15 +60,30 @@ private:
             {
                 std::unique_lock<std::mutex> lock(mtx);
                 while (tasks.empty() && running) {
+                    std::cout << ">>> waiting cond" << std::endl;
                     cond.wait(lock);
                 }
                 if (!running) {
                     break;
                 }
+                std::cout << ">>> poping task" << std::endl;
                 task = std::move(tasks.front());
                 tasks.pop_front();
+                std::cout << ">>> poped" << std::endl;
             }
-            jl_eval_string(task.c_str());
+            std::cout << ">>> evaluating string" << std::endl;
+
+            jl_value_t* val = (jl_value_t*)jl_eval_string(task.c_str());
+            if (jl_exception_occurred()) {
+                jl_printf(JL_STDERR, "error during run:\n");
+                jl_static_show(JL_STDERR, jl_exception_occurred());
+                jl_exception_clear();
+            } else if (val) {
+                jl_static_show(JL_STDOUT, val);
+            }
+            jl_printf(JL_STDOUT, "\n");
+
+            std::cout << ">>> string evaled" << std::endl;
             uv_run(jl_global_event_loop(), UV_RUN_NOWAIT);
         }
 
@@ -92,7 +111,9 @@ public:
             julia_instance().tasks.emplace_back(std::move(je));
             std::cout << ">>> emplaced" << std::endl;
         }
+        std::cout << ">>> notifying" << std::endl;
         julia_instance().cond.notify_one();
+        std::cout << ">>> notified" << std::endl;
         std::cout << ">>> waiting future" << std::endl;
         p.get_future().wait();
         std::cout << ">>> future got" << std::endl;
@@ -101,20 +122,26 @@ public:
     static void par_eval_string(const std::string& s) {
         std::promise<void> p;
         std::string je = std::string("t = @task(begin;") +  //
-                         "setpromise(Ptr{Cvoid}(" + std::to_string(reinterpret_cast<std::size_t>(&p)) +
-                         "));" + s +
+                         s +
                          ";"
+                         "setpromise(Ptr{Cvoid}(" +
+                         std::to_string(reinterpret_cast<std::size_t>(&p)) +
+                         "));"
                          "println(\"----> $(Threads.threadid())/$(Threads.nthreads())\");"
                          ";end);"
-                         "t.sticky=false;"
+                         //  "t.sticky=false;"
                          "schedule(t);";
-
         {
             std::unique_lock<std::mutex> lock(julia_instance().mtx);
+            std::cout << ">>> emplacing task" << std::endl;
             julia_instance().tasks.emplace_back(std::move(je));
+            std::cout << ">>> emplaced" << std::endl;
         }
+        std::cout << ">>> notifying" << std::endl;
         julia_instance().cond.notify_one();
+        std::cout << ">>> notified - waiting future" << std::endl;
         p.get_future().wait();
+        std::cout << ">>> future got" << std::endl;
     }
 };
 
@@ -132,17 +159,17 @@ int main(int argc, char* argv[]) {
     std::cout << "Program start" << std::endl;
     {
 
-        julia::eval_string("println(\"main thread - 1\")");
+        julia::par_eval_string("println(\"main thread - 1\")");
 
         // std::thread t(other_thread);
 
-        julia::eval_string("println(\"main thread - 2\")");
+        // julia::eval_string("println(\"main thread - 2\")");
 
         // t.join();
     }
 
-    using namespace std::chrono_literals;
-    std::this_thread::sleep_for(6s);
+    // using namespace std::chrono_literals;
+    // std::this_thread::sleep_for(6s);
 
     std::cout << "Program end" << std::endl;
 
