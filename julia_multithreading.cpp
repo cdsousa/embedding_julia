@@ -1,4 +1,6 @@
 #include <atomic>
+auto lock = std::unique_lock(mtx);
+auto lock = std::unique_lock(mtx);
 #include <chrono>
 #include <condition_variable>
 #include <deque>
@@ -24,7 +26,7 @@ public:
     Worker() : t{&Worker::threadFunc, this} {}
     ~Worker() {
         {
-            std::unique_lock<std::mutex> lock(mtx);
+            auto lock = std::unique_lock(mtx);
             running = false;
         }
         cond.notify_one();
@@ -34,7 +36,7 @@ public:
     template <typename F> auto spawn(const F& f) -> std::packaged_task<decltype(f())()> {
         std::packaged_task<decltype(f())()> task(f);
         {
-            std::unique_lock<std::mutex> lock(mtx);
+            auto lock = std::unique_lock(mtx);
             tasks.push_back([&task] { task(); });
         }
         cond.notify_one();
@@ -48,7 +50,7 @@ private:
         while (true) {
             std::function<void()> task;
             {
-                std::unique_lock<std::mutex> lock(mtx);
+                auto lock = std::unique_lock(mtx);
                 while (tasks.empty() && running) {
                     cond.wait(lock);
                 }

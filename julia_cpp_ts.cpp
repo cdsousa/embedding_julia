@@ -12,13 +12,37 @@
 #define JULIA_ENABLE_THREADING
 #include <julia.h>
 
+class uvmutex {
+    uv_mutex_t _m;
 
+public:
+    uvmutex() { uv_mutex_init(&_m); }
+    ~uvmutex() { uv_mutex_destroy(&_m); }
+    uv_mutex_t* uv_mutex() { return &_m; }
+    void lock() { uv_mutex_lock(&_m); }
+    bool try_lock() { return uv_mutex_trylock(&_m) == 0; }
+    void unlock() { uv_mutex_unlock(&_m); }
+};
+
+class uvcondition {
+    uv_cond_t _c;
+
+public:
+    uvcondition() { uv_cond_init(&_c); }
+    ~uvcondition() { uv_cond_destroy(&_c); }
+    void wait(std::unique_lock<uvmutex>& lock) { uv_cond_wait(&_c, lock.mutex()->uv_mutex()); }
+    void notify_one() { uv_cond_signal(&_c); }
+};
 
 class julia {
     bool running = true;
     std::thread t;
+
     std::mutex mtx;
     std::condition_variable cond;
+    // uvmutex mtx;
+    // uvcondition cond;
+
     std::deque<std::string> tasks;
 
 private:
@@ -30,7 +54,7 @@ private:
     julia() : t{&julia::julia_main_thread_func, this} {}
     ~julia() {
         {
-            std::unique_lock<std::mutex> lock(mtx);
+            auto lock = std::unique_lock(mtx);
             running = false;
         };
         cond.notify_one();
@@ -41,8 +65,8 @@ private:
 
         using namespace std::chrono_literals;
 
-        // uv_setup_args(0,0);
-        // libsupport_init();
+        uv_setup_args(0, 0);
+        libsupport_init();
 
         setenv("JULIA_NUM_THREADS", "16", true);
         jl_init();
@@ -57,15 +81,21 @@ private:
             std::cout << "!!!!!!!!!! " << jl_typeof_str(jl_exception_occurred()) << std::endl;
         }
 
+
+        jl_eval_string("ppp(x) = println(x)");
+        if (jl_exception_occurred()) {
+            std::cout << "!!!!!!!!!! " << jl_typeof_str(jl_exception_occurred()) << std::endl;
+        }
+
         while (running) {
             std::string task;
             {
-                std::unique_lock<std::mutex> lock(mtx);
+                auto lock = std::unique_lock(mtx);
                 while (tasks.empty() && running) {
-                    jl_yield();
-                    uv_run(jl_global_event_loop(), UV_RUN_NOWAIT);
+                    // jl_yield();
+                    // uv_run(jl_global_event_loop(), UV_RUN_NOWAIT);
                     // std::cout << ">>> waiting cond" << std::endl;
-                    cond.wait_for(lock, 100ms);
+                    cond.wait(lock);
                 }
                 if (!running) {
                     break;
@@ -82,7 +112,7 @@ private:
                 jl_printf(JL_STDERR, "error during run:\n");
                 jl_static_show(JL_STDERR, jl_exception_occurred());
                 jl_exception_clear();
-            } 
+            }
 
             // std::cout << ">>> string evaled" << std::endl;
         }
@@ -105,7 +135,7 @@ public:
                          "setpromise(Ptr{Cvoid}(" +
                          std::to_string(reinterpret_cast<std::size_t>(&p)) + "));";
         {
-            std::unique_lock<std::mutex> lock(julia_instance().mtx);
+            auto lock = std::unique_lock(julia_instance().mtx);
             // std::cout << ">>> emplacing task" << std::endl;
             julia_instance().tasks.emplace_back(std::move(je));
             // std::cout << ">>> emplaced" << std::endl;
@@ -127,10 +157,10 @@ public:
                          std::to_string(reinterpret_cast<std::size_t>(&p)) +
                          "));"
                          ";end);"
-                        //   "t.sticky=false;"
+                         //   "t.sticky=false;"
                          "schedule(t);";
         {
-            std::unique_lock<std::mutex> lock(julia_instance().mtx);
+            auto lock = std::unique_lock(julia_instance().mtx);
             // std::cout << ">>> emplacing task" << std::endl;
             julia_instance().tasks.emplace_back(std::move(je));
             // std::cout << ">>> emplaced" << std::endl;
@@ -146,7 +176,8 @@ public:
 
 int other_thread() {
 
-    julia::par_eval_string("println(\"o1 - $(Threads.threadid())/$(Threads.nthreads())\"); sleep(3); println(\"o1\")");
+    julia::par_eval_string(
+        "ppp(\"o1 - $(Threads.threadid())/$(Threads.nthreads())\"); sleep(3); ppp(\"o1\")");
 
     return 0;
 }
@@ -156,11 +187,13 @@ int main(int argc, char* argv[]) {
 
     {
 
-        julia::par_eval_string("println(\"m1 - $(Threads.threadid())/$(Threads.nthreads())\"); sleep(3); println(\"m1\")");
+        julia::par_eval_string(
+            "ppp(\"m1 - $(Threads.threadid())/$(Threads.nthreads())\"); sleep(3); ppp(\"m1\")");
 
         std::thread t(other_thread);
 
-        julia::par_eval_string("println(\"m2 - $(Threads.threadid())/$(Threads.nthreads())\"); sleep(3); println(\"m2\")");
+        julia::par_eval_string(
+            "ppp(\"m2 - $(Threads.threadid())/$(Threads.nthreads())\"); sleep(3); ppp(\"m2\")");
 
         t.join();
     }
