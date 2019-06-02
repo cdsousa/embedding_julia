@@ -68,10 +68,14 @@ private:
         uv_setup_args(0, 0);
         libsupport_init();
 
-        setenv("JULIA_NUM_THREADS", "16", true);
+        setenv("JULIA_NUM_THREADS", "4", true);
         jl_init();
 
+
+
         jl_eval_string("println(\"JULIA  START\")");
+
+
 
         auto setpromise_ptr = std::to_string(reinterpret_cast<std::size_t>(setpromise));
         auto jl_def_setpromise =
@@ -87,14 +91,12 @@ private:
             std::cout << "!!!!!!!!!! " << jl_typeof_str(jl_exception_occurred()) << std::endl;
         }
 
+
         while (running) {
             std::string task;
             {
                 auto lock = std::unique_lock(mtx);
                 while (tasks.empty() && running) {
-                    // jl_yield();
-                    // uv_run(jl_global_event_loop(), UV_RUN_NOWAIT);
-                    // std::cout << ">>> waiting cond" << std::endl;
                     cond.wait(lock);
                 }
                 if (!running) {
