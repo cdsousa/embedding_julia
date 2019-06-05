@@ -96,18 +96,27 @@ private:
             std::string task;
             {
                 auto lock = std::unique_lock(mtx);
+                std::cout << ">>> checking task available" << std::endl;
                 while (tasks.empty() && running) {
-                    cond.wait(lock);
+                    // cond.wait(lock);
+                    std::cout << ">>> waiting" << std::endl;
+                    lock.unlock();
+                    // uv_loop_t *loop = jl_global_event_loop();
+                    // loop->stop_flag = 0;
+                    // bool active = uv_run(loop, UV_RUN_NOWAIT);
+                    jl_eval_string("wait()");
+                    lock.lock();
                 }
                 if (!running) {
                     break;
                 }
-                // std::cout << ">>> poping task" << std::endl;
+                std::cout << ">>> task available" << std::endl;
+                std::cout << ">>> poping task" << std::endl;
                 task = std::move(tasks.front());
                 tasks.pop_front();
-                // std::cout << ">>> poped" << std::endl;
+                std::cout << ">>> poped" << std::endl;
             }
-            // std::cout << ">>> evaluating string" << std::endl;
+            std::cout << ">>> evaluating string" << std::endl;
 
             jl_eval_string(task.c_str());
             if (jl_exception_occurred()) {
@@ -116,7 +125,7 @@ private:
                 jl_exception_clear();
             }
 
-            // std::cout << ">>> string evaled" << std::endl;
+            std::cout << ">>> string evaled" << std::endl;
         }
 
         jl_eval_string("println(\"JULIA END\")");
@@ -124,9 +133,9 @@ private:
     }
 
     static void setpromise(std::promise<void>* p) {
-        // std::cout << ">>> setting promise" << std::endl;
+        std::cout << ">>> setting promise" << std::endl;
         p->set_value();
-        // std::cout << ">>> promise set" << std::endl;
+        std::cout << ">>> promise set" << std::endl;
     }
 
 public:
@@ -138,16 +147,16 @@ public:
                          std::to_string(reinterpret_cast<std::size_t>(&p)) + "));";
         {
             auto lock = std::unique_lock(julia_instance().mtx);
-            // std::cout << ">>> emplacing task" << std::endl;
+            std::cout << ">>> emplacing task" << std::endl;
             julia_instance().tasks.emplace_back(std::move(je));
-            // std::cout << ">>> emplaced" << std::endl;
+            std::cout << ">>> emplaced" << std::endl;
         }
-        // std::cout << ">>> notifying" << std::endl;
+        std::cout << ">>> notifying" << std::endl;
         julia_instance().cond.notify_one();
-        // std::cout << ">>> notified" << std::endl;
-        // std::cout << ">>> waiting future" << std::endl;
+        std::cout << ">>> notified" << std::endl;
+        std::cout << ">>> waiting future" << std::endl;
         p.get_future().wait();
-        // std::cout << ">>> future got" << std::endl;
+        std::cout << ">>> future got" << std::endl;
     }
 
     static void par_eval_string(const std::string& s) {
@@ -163,15 +172,15 @@ public:
                          "schedule(t);";
         {
             auto lock = std::unique_lock(julia_instance().mtx);
-            // std::cout << ">>> emplacing task" << std::endl;
+            std::cout << ">>> emplacing task" << std::endl;
             julia_instance().tasks.emplace_back(std::move(je));
-            // std::cout << ">>> emplaced" << std::endl;
+            std::cout << ">>> emplaced" << std::endl;
         }
-        // std::cout << ">>> notifying" << std::endl;
+        std::cout << ">>> notifying" << std::endl;
         julia_instance().cond.notify_one();
-        // std::cout << ">>> notified - waiting future" << std::endl;
+        std::cout << ">>> notified - waiting future" << std::endl;
         p.get_future().wait();
-        // std::cout << ">>> future got" << std::endl;
+        std::cout << ">>> future got" << std::endl;
     }
 };
 
