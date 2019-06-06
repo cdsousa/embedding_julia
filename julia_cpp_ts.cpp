@@ -36,34 +36,36 @@ public:
 
 class julia {
     bool running = true;
-    std::thread t;
 
     std::mutex mtx;
     std::condition_variable cond;
     // uvmutex mtx;
     // uvcondition cond;
+    uv_loop_t* global_event_loop;
 
     std::deque<std::string> tasks;
 
+    std::thread t;
 private:
     static julia& julia_instance() {
         static julia julia_instance;
         return julia_instance;
     }
 
-    julia() : t{&julia::julia_main_thread_func, this} {}
+    julia() : t(&julia::julia_main_thread_func, this, std::move(std::unique_lock(mtx))) {}
     ~julia() {
         {
             auto lock = std::unique_lock(mtx);
             running = false;
         };
-        cond.notify_one();
+        notify();
         t.join();
     }
 
-    void julia_main_thread_func() {
+    void julia_main_thread_func(std::unique_lock<std::mutex> lock) {
 
         using namespace std::chrono_literals;
+
 
         uv_setup_args(0, 0);
         libsupport_init();
@@ -71,10 +73,9 @@ private:
         setenv("JULIA_NUM_THREADS", "4", true);
         jl_init();
 
-
+        global_event_loop = jl_global_event_loop();
 
         jl_eval_string("println(\"JULIA  START\")");
-
 
 
         auto setpromise_ptr = std::to_string(reinterpret_cast<std::size_t>(setpromise));
@@ -90,7 +91,8 @@ private:
         if (jl_exception_occurred()) {
             std::cout << "!!!!!!!!!! " << jl_typeof_str(jl_exception_occurred()) << std::endl;
         }
-
+        
+        lock.unlock();
 
         while (running) {
             std::string task;
@@ -139,6 +141,11 @@ private:
     }
 
 public:
+    static void notify(){
+        auto lock = std::unique_lock(julia_instance().mtx);
+        uv_stop(julia_instance().global_event_loop);
+    }
+
     static void eval_string(const std::string& s) {
         std::promise<void> p;
         std::string je = s +
@@ -152,7 +159,7 @@ public:
             std::cout << ">>> emplaced" << std::endl;
         }
         std::cout << ">>> notifying" << std::endl;
-        julia_instance().cond.notify_one();
+        julia_instance().notify();
         std::cout << ">>> notified" << std::endl;
         std::cout << ">>> waiting future" << std::endl;
         p.get_future().wait();
@@ -177,7 +184,7 @@ public:
             std::cout << ">>> emplaced" << std::endl;
         }
         std::cout << ">>> notifying" << std::endl;
-        julia_instance().cond.notify_one();
+        julia_instance().notify();
         std::cout << ">>> notified - waiting future" << std::endl;
         p.get_future().wait();
         std::cout << ">>> future got" << std::endl;
