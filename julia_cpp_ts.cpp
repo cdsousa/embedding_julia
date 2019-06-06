@@ -42,10 +42,12 @@ class julia {
     // uvmutex mtx;
     // uvcondition cond;
     uv_loop_t* global_event_loop;
+    uv_async_t async;
 
     std::deque<std::string> tasks;
 
     std::thread t;
+
 private:
     static julia& julia_instance() {
         static julia julia_instance;
@@ -62,6 +64,10 @@ private:
         t.join();
     }
 
+    static void async_cb(uv_async_t* handle){
+        uv_stop(julia_instance().global_event_loop);
+    }
+
     void julia_main_thread_func(std::unique_lock<std::mutex> lock) {
 
         using namespace std::chrono_literals;
@@ -73,7 +79,14 @@ private:
         setenv("JULIA_NUM_THREADS", "4", true);
         jl_init();
 
+
+
         global_event_loop = jl_global_event_loop();
+
+        uv_async_init(global_event_loop, &async, async_cb);
+
+
+
 
         jl_eval_string("println(\"JULIA  START\")");
 
@@ -91,17 +104,17 @@ private:
         if (jl_exception_occurred()) {
             std::cout << "!!!!!!!!!! " << jl_typeof_str(jl_exception_occurred()) << std::endl;
         }
-        
+
         lock.unlock();
 
         while (running) {
             std::string task;
             {
                 auto lock = std::unique_lock(mtx);
-                std::cout << ">>> checking task available" << std::endl;
+                std::cout << "[]>>> checking task available" << std::endl;
                 while (tasks.empty() && running) {
                     // cond.wait(lock);
-                    std::cout << ">>> waiting" << std::endl;
+                    std::cout << "[]>>> waiting" << std::endl;
                     lock.unlock();
                     // uv_loop_t *loop = jl_global_event_loop();
                     // loop->stop_flag = 0;
@@ -112,13 +125,13 @@ private:
                 if (!running) {
                     break;
                 }
-                std::cout << ">>> task available" << std::endl;
-                std::cout << ">>> poping task" << std::endl;
+                std::cout << "[]>>> task available" << std::endl;
+                std::cout << "[]>>> poping task" << std::endl;
                 task = std::move(tasks.front());
                 tasks.pop_front();
-                std::cout << ">>> poped" << std::endl;
+                std::cout << "[]>>> poped" << std::endl;
             }
-            std::cout << ">>> evaluating string" << std::endl;
+            std::cout << "[]>>> evaluating string" << std::endl;
 
             jl_eval_string(task.c_str());
             if (jl_exception_occurred()) {
@@ -127,7 +140,7 @@ private:
                 jl_exception_clear();
             }
 
-            std::cout << ">>> string evaled" << std::endl;
+            std::cout << "[]>>> string evaled" << std::endl;
         }
 
         jl_eval_string("println(\"JULIA END\")");
@@ -141,9 +154,10 @@ private:
     }
 
 public:
-    static void notify(){
+    static void notify() {
         auto lock = std::unique_lock(julia_instance().mtx);
-        uv_stop(julia_instance().global_event_loop);
+        // uv_stop(julia_instance().global_event_loop);
+        uv_async_send(&julia_instance().async);
     }
 
     static void eval_string(const std::string& s) {
