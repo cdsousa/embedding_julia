@@ -11,39 +11,18 @@
 
 #define JULIA_ENABLE_THREADING
 #include <julia.h>
+extern "C"{
+    JL_DLLEXPORT jl_task_t *jl_task_get_next(jl_value_t *getsticky);
+}
 
-class uvmutex {
-    uv_mutex_t _m;
 
-public:
-    uvmutex() { uv_mutex_init(&_m); }
-    ~uvmutex() { uv_mutex_destroy(&_m); }
-    uv_mutex_t* uv_mutex() { return &_m; }
-    void lock() { uv_mutex_lock(&_m); }
-    bool try_lock() { return uv_mutex_trylock(&_m) == 0; }
-    void unlock() { uv_mutex_unlock(&_m); }
-};
-
-class uvcondition {
-    uv_cond_t _c;
-
-public:
-    uvcondition() { uv_cond_init(&_c); }
-    ~uvcondition() { uv_cond_destroy(&_c); }
-    void wait(std::unique_lock<uvmutex>& lock) { uv_cond_wait(&_c, lock.mutex()->uv_mutex()); }
-    void notify_one() { uv_cond_signal(&_c); }
-};
 
 class julia {
     bool running = true;
 
     std::mutex mtx;
-    std::condition_variable cond;
-    // uvmutex mtx;
-    // uvcondition cond;
     uv_loop_t* global_event_loop;
     uv_async_t async;
-    uv_pipe_t* pipe_handle;
 
     std::deque<std::string> tasks;
 
@@ -55,7 +34,8 @@ private:
         return julia_instance;
     }
 
-    julia() : t(&julia::julia_main_thread_func, this, std::move(std::unique_lock(mtx))) {}
+    julia() : t(&julia::julia_main_thread_func, this, std::move(std::unique_lock(mtx))) {
+    }
     ~julia() {
         {
             auto lock = std::unique_lock(mtx);
@@ -66,30 +46,81 @@ private:
     }
 
 
-    static void cb(uv_write_t* req, int status) {
-        /* Logic which handles the write result */
-
-            std::cout << "===a" << std::endl;
-            std::cout << "===b" << std::endl;
-    }
-
     static void async_cb(uv_async_t* handle) { 
-            std::cout << "===1" << std::endl;
-          // uv_stop(julia_instance().global_event_loop);
+            std::cout << "=== in" << std::endl;
+
+            while(true){
+                std::string task;
+                {
+                    std::unique_lock<std::mutex> lock;
+
+                    std::cout << ">>> task available?" << std::endl;
+                    if(julia_instance().tasks.empty() || !julia_instance().running) {
+                          std::cout << ">>> no!" << std::endl;
+                        break;
+                    }
+                    std::cout << ">>> yes!" << std::endl;
+
+                    std::cout << ">>> poping task" << std::endl;
+                    task = std::move(julia_instance().tasks.front());
+                    julia_instance().tasks.pop_front();
+                    std::cout << ">>> poped" << std::endl;
+                }
+
+                std::cout << ">>> evaluating string" << std::endl;
+
+                jl_eval_string(task.c_str());
+                if (jl_exception_occurred()) {
+                    jl_printf(JL_STDERR, "error during run:\n");
+                    jl_static_show(JL_STDERR, jl_exception_occurred());
+                    jl_exception_clear();
+                }
+
+                std::cout << ">>> string evaled" << std::endl;
+
+            }
+
+            if(!julia_instance().running){
+                std::cout << ">>> stopping " << std::endl;
+                // julia_instance().global_event_loop->stop_flag = 1;
+            //    enq_work(current_task()
+            //     // jl_wakeup_thread(0);
+                
+                // uv_stop(uv_default_loop());
+
+            // jl_eval_string("push!(Base.Workqueues[Threads.threadid()], @task(nothing))");
+
+            //    if (jl_exception_occurred()) {
+            //         std::cout << "!!!!!!!!!!0" << jl_typeof_str(jl_exception_occurred()) << std::endl;
+            //      }
+
+                // jl_try_deliver_sigint();
 
 
-            uv_buf_t a[] = {
-                { .base = const_cast<char*>("\0"), .len = 1 },
-                { .base = const_cast<char*>("2"), .len = 1 }
-            };
+            //    raise(SIGTSTP);
 
-            uv_write_t req1;
+               jl_eval_string("fff() = push!(Base.Workqueues[Threads.threadid()], @task(println(1111111)))");
+               if (jl_exception_occurred()) {
+                    std::cout << "!!!!!!!!!!0" << jl_typeof_str(jl_exception_occurred()) << std::endl;
+                 }
 
-            /* writes "1234" */
-            uv_write(&req1, (uv_stream_t*)julia_instance().pipe_handle, a, 1, cb);
+
+                jl_function_t* func = jl_get_function(jl_main_module, "fff");
+
+                jl_call0(func);
+                jl_call0(func);
+                jl_call0(func);
+                jl_call0(func);
+                jl_call0(func);
+                jl_call0(func);
+
+                jl_eval_string("notify(ccc)");
+
+            //    uv_stop(uv_default_loop());
+            }
         
-            std::cout << "===2" << std::endl;
-         }
+            std::cout << "=== out" << std::endl;
+        }
 
     void julia_main_thread_func(std::unique_lock<std::mutex> lock) {
 
@@ -99,9 +130,9 @@ private:
         uv_setup_args(0, 0);
         libsupport_init();
 
-        setenv("JULIA_NUM_THREADS", "4", true);
-        jl_init();
+        setenv("JULIA_NUM_THREADS", "1", true);
 
+        jl_init();
 
 
         global_event_loop = jl_global_event_loop();
@@ -113,15 +144,14 @@ private:
         jl_eval_string("println(\"JULIA  START\")");
 
 
-        jl_eval_string("const pe = Base.PipeEndpoint();");
+
+
+        jl_eval_string("const ccc = Condition()");
         if (jl_exception_occurred()) {
-            std::cout << "!!!!!!!!!!1" << jl_typeof_str(jl_exception_occurred()) << std::endl;
+            std::cout << "!!!!!!!!!!3 " << jl_typeof_str(jl_exception_occurred()) << std::endl;
         }
 
-        jl_eval_string("println(pe.handle)");
 
-        jl_value_t* h = jl_eval_string("pe.handle");
-        pipe_handle = (uv_pipe_t*)jl_unbox_voidpointer(h);
 
         auto setpromise_ptr = std::to_string(reinterpret_cast<std::size_t>(setpromise));
         auto jl_def_setpromise =
@@ -136,54 +166,44 @@ private:
         if (jl_exception_occurred()) {
             std::cout << "!!!!!!!!!!3 " << jl_typeof_str(jl_exception_occurred()) << std::endl;
         }
+     
+        std::cout << ">>> waiting" << std::endl;
 
-
-        while (running) {
-            std::string task;
-
-            std::cout << ">>> task available?" << std::endl;
-            while (tasks.empty() && running) {
-                std::cout << ">>> no!" << std::endl;
-                // cond.wait(lock);
-                std::cout << ">>> waiting" << std::endl;
                 lock.unlock();
-                // bool active = uv_run(global_event_loop, UV_RUN_ONCE);
-                // std::cout << ">>> ..." << std::endl;
-                // jl_eval_string("yield()");
-                jl_eval_string("wait_readbyte(pe, 0x0)");
-                if (jl_exception_occurred()) {
-                    std::cout << "!!!!!!!!!! " << jl_typeof_str(jl_exception_occurred()) << std::endl;
-                }
-                // jl_eval_string("process_events()");
+
+                    jl_eval_string("lock(ccc); wait(ccc); unlock(ccc)");
+
+
+                // while(running){
+                //     // jl_eval_string("yield()");
+                //      jl_cpu_pause();
+                //     bool active = uv_run(global_event_loop, UV_RUN_ONCE);
+                // }
+
+
+                // jl_value_t* getsticky = jl_eval_string("mygettask() = Base.trypoptask(Base.Workqueues[Threads.threadid()]); mygettask");
+                // if (jl_exception_occurred()) {
+                //     std::cout << "!!!!!!!!!!aaa" << jl_typeof_str(jl_exception_occurred()) << std::endl;
+                // }
+                // jl_eval_string("ccall(:jl_task_get_next, Any, (Any,), mygettask)");
+                // if (jl_exception_occurred()) {
+                //     std::cout << "!!!!!!!!!!bbbb" << jl_typeof_str(jl_exception_occurred()) << std::endl;
+                // }
+
+                // jl_value_t* getsticky = jl_get_function(jl_main_module, "mygettask");
+                // jl_task_get_next(getsticky);
+
+
+
+
                 lock.lock();
-                std::cout << ">>> stopped waiting" << std::endl;
-                std::cout << ">>> task available?" << std::endl;
-            }
-            if (!running) {
-                break;
-            }
-            std::cout << ">>> yes!!" << std::endl;
 
-            std::cout << ">>> poping task" << std::endl;
-            task = std::move(tasks.front());
-            tasks.pop_front();
-            std::cout << ">>> poped" << std::endl;
-
-            lock.unlock();
-
-            std::cout << ">>> evaluating string" << std::endl;
-
-            jl_eval_string(task.c_str());
-            if (jl_exception_occurred()) {
-                jl_printf(JL_STDERR, "error during run:\n");
-                jl_static_show(JL_STDERR, jl_exception_occurred());
-                jl_exception_clear();
-            }
-
-            std::cout << ">>> string evaled" << std::endl;
-
-            lock.lock();
+        if (jl_exception_occurred()) {
+            std::cout << "!!!!!!!!!!4" << jl_typeof_str(jl_exception_occurred()) << std::endl;
         }
+
+
+        std::cout << ">>> stopped waiting" << std::endl;
 
         jl_eval_string("println(\"JULIA END\")");
         jl_atexit_hook(0);
@@ -196,12 +216,12 @@ private:
     }
 
 public:
-    static void notify() {
-        auto lock = std::unique_lock(julia_instance().mtx);
-        // uv_stop(julia_instance().global_event_loop);
-        uv_async_send(&julia_instance().async);
+    static void waitinit() {
+            auto lock = std::unique_lock(julia_instance().mtx);
+    }
 
-        
+    static void notify() {
+        uv_async_send(&julia_instance().async);
     }
 
     static void eval_string(const std::string& s) {
@@ -260,6 +280,9 @@ int other_thread() {
 
 
 int main(int argc, char* argv[]) {
+
+    julia::waitinit();
+
 
     {
 
