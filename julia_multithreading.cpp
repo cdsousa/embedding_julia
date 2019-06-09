@@ -1,6 +1,4 @@
 #include <atomic>
-auto lock = std::unique_lock(mtx);
-auto lock = std::unique_lock(mtx);
 #include <chrono>
 #include <condition_variable>
 #include <deque>

@@ -6,6 +6,7 @@
 #include <iostream>
 #include <mutex>
 #include <thread>
+#include <variant>
 #include <vector>
 
 
@@ -14,20 +15,17 @@
 
 
 class julia {
+
+
     bool running = true;
 
     std::mutex mtx;
     uv_loop_t* global_event_loop;
     uv_async_t* uv_async_cond;
-    std::deque<std::string> tasks;
+    typedef std::variant<std::function<void()>, std::string> var_t;
+    std::deque<var_t> tasks;
 
     std::thread t;
-
-private:
-    static julia& julia_instance() {
-        static julia julia_instance;
-        return julia_instance;
-    }
 
     julia() : t(&julia::julia_main_thread_func, this, std::move(std::unique_lock(mtx))) {}
     ~julia() {
@@ -39,11 +37,7 @@ private:
         t.join();
     }
 
-    void notify() { 
-        std::cout << "--- notifying" << std::endl;
-        uv_async_send(uv_async_cond); uv_stop(global_event_loop); 
-        std::cout << "--- notifyed" << std::endl;
-    }
+    void notify() { uv_async_send(uv_async_cond); }
 
     void julia_main_thread_func(std::unique_lock<std::mutex> mtxlock) {
 
@@ -55,41 +49,41 @@ private:
 
         global_event_loop = jl_global_event_loop();
 
-        jl_value_t* _cpp_async_cond_handle = jl_eval_string("const _cpp_async_cond = Base.AsyncCondition(); _cpp_async_cond.handle");
-        if (jl_exception_occurred()) {
-            std::cout << "!!!!!!!!!! " << jl_typeof_str(jl_exception_occurred()) << std::endl;
-        }
+        jl_value_t* _cpp_async_cond_handle =
+            jl_eval_string("const _cpp_async_cond = Base.AsyncCondition(); _cpp_async_cond.handle");
+
         uv_async_cond = reinterpret_cast<uv_async_t*>(jl_unbox_voidpointer(_cpp_async_cond_handle));
 
         auto setpromise_ptr = std::to_string(reinterpret_cast<std::size_t>(setpromise));
         auto jl_def_setpromise =
             "setpromise(p::Ptr{Cvoid}) = ccall(Ptr{Cvoid}(" + setpromise_ptr + "), Cvoid, (Ptr{Cvoid},), p);";
         jl_eval_string(jl_def_setpromise.c_str());
-        if (jl_exception_occurred()) {
-            std::cout << "!!!!!!!!!! " << jl_typeof_str(jl_exception_occurred()) << std::endl;
-        }
 
         jl_eval_string("ppp(x) = println(x)");
+
         if (jl_exception_occurred()) {
-            std::cout << "!!!!!!!!!!3 " << jl_typeof_str(jl_exception_occurred()) << std::endl;
+            std::cerr << "Julia exception on initialization: " << jl_typeof_str(jl_exception_occurred())
+                      << std::endl;
+            return;
         }
 
 
         jl_eval_string("println(\"JULIA  START\")");
 
 
+        var_t task;
+
         while (true) {
-            std::string task;
             {
                 while (tasks.empty() && running) {
-                    std::cout << ">>> waiting" << std::endl;
                     mtxlock.unlock();
                     jl_eval_string("wait(_cpp_async_cond)");
                     if (jl_exception_occurred()) {
-                        std::cout << "!!!!!!!!!! " << jl_typeof_str(jl_exception_occurred()) << std::endl;
+                        std::cerr << "Julia exception on waiting: " << jl_typeof_str(jl_exception_occurred())
+                                  << std::endl;
+                        return;
                     }
                     mtxlock.lock();
-                    std::cout << ">>> waked" << std::endl;
                 }
                 if (!running) {
                     break;
@@ -99,11 +93,27 @@ private:
             }
             mtxlock.unlock();
 
-            jl_eval_string(task.c_str());
-            if (jl_exception_occurred()) {
-                jl_printf(JL_STDERR, "error during task string evaluation:\n");
-                jl_static_show(JL_STDERR, jl_exception_occurred());
-                jl_exception_clear();
+            if (auto str = std::get_if<std::string>(&task)) {
+                jl_eval_string(str->c_str());
+                if (jl_exception_occurred()) {
+                    jl_printf(JL_STDERR, "error during task string evaluation:\n");
+                    jl_static_show(JL_STDERR, jl_exception_occurred());
+                    jl_exception_clear();
+                }
+            } else if (auto pf = std::get_if<std::function<void()>>(&task); auto& f = *pf) {
+                f();
+                // auto str_p_callfunction = std::to_string(reinterpret_cast<std::size_t>(&callfunction));
+                // auto str_p_f = std::to_string(reinterpret_cast<std::size_t>(&f));
+                // auto s = "ccall(Ptr{Cvoid}(" + str_p_callfunction + "), Cvoid, (Ptr{Cvoid},), Ptr{Cvoid}("
+                // +
+                //          str_p_f + "));";
+                // std::cout << s << std::endl;
+                // jl_eval_string(s.c_str());
+                // if (jl_exception_occurred()) {
+                //     jl_printf(JL_STDERR, "error during task string evaluation:\n");
+                //     jl_static_show(JL_STDERR, jl_exception_occurred());
+                //     jl_exception_clear();
+                // }
             }
 
             mtxlock.lock();
@@ -113,15 +123,15 @@ private:
         jl_atexit_hook(0);
     }
 
-    static void setpromise(std::promise<void>* p) {
-        std::cout << "--- setting promise" << std::endl;
-        p->set_value();
-        std::cout << "--- promise set" << std::endl;
+    static void setpromise(std::promise<void>* p) { p->set_value(); }
+    static void callfunction(std::function<void()>* f) { (*f)(); }
+
+    static julia& julia_instance() {
+        static julia julia_instance;
+        return julia_instance;
     }
 
 public:
-
-
     static void eval_string(const std::string& s) {
         std::promise<void> p;
         std::string je = s +
@@ -130,14 +140,10 @@ public:
                          std::to_string(reinterpret_cast<std::size_t>(&p)) + "));";
         {
             auto lock = std::unique_lock(julia_instance().mtx);
-            std::cout << "--- emplacing task" << std::endl;
             julia_instance().tasks.emplace_back(std::move(je));
-            std::cout << "--- emplaced" << std::endl;
         }
         julia_instance().notify();
-        std::cout << "--- waiting future" << std::endl;
         p.get_future().wait();
-        std::cout << "--- future got" << std::endl;
     }
 
     static void par_eval_string(const std::string& s) {
@@ -153,14 +159,20 @@ public:
                          "schedule(t);";
         {
             auto lock = std::unique_lock(julia_instance().mtx);
-            std::cout << "--- emplacing task" << std::endl;
             julia_instance().tasks.emplace_back(std::move(je));
-            std::cout << "--- emplaced" << std::endl;
         }
         julia_instance().notify();
-        std::cout << "--- waiting future" << std::endl;
         p.get_future().wait();
-        std::cout << "--- future got" << std::endl;
+    }
+
+    template <typename F> static auto run(const F& f) -> decltype(f()) {
+        std::packaged_task<decltype(f())()> task(f);
+        {
+            auto lock = std::unique_lock<std::mutex>(julia_instance().mtx);
+            julia_instance().tasks.emplace_back([&task] { task(); });
+        }
+        julia_instance().notify();
+        return task.get_future().get();
     }
 };
 
@@ -168,7 +180,7 @@ public:
 int other_thread() {
 
     julia::par_eval_string(
-        "ppp(\"o1 - $(Threads.threadid())/$(Threads.nthreads())\"); sleep(1); ppp(\"o1\")");
+        "ppp(\"o1 - $(Threads.threadid())/$(Threads.nthreads())\"); sleep(3); ppp(\"o1\")");
 
     return 0;
 }
@@ -176,15 +188,16 @@ int other_thread() {
 
 int main(int argc, char* argv[]) {
 
-    {
+    julia::run([] { jl_eval_string("println(123456789)"); });
 
+    {
         julia::par_eval_string(
-            "ppp(\"m1 - $(Threads.threadid())/$(Threads.nthreads())\"); sleep(1); ppp(\"m1\")");
+            "ppp(\"m1 - $(Threads.threadid())/$(Threads.nthreads())\"); sleep(3); ppp(\"m1\")");
 
         std::thread t(other_thread);
 
         julia::par_eval_string(
-            "ppp(\"m2 - $(Threads.threadid())/$(Threads.nthreads())\"); sleep(1); ppp(\"m2\")");
+            "ppp(\"m2 - $(Threads.threadid())/$(Threads.nthreads())\"); sleep(3); ppp(\"m2\")");
 
         t.join();
     }
